@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invencloud</title>
+<style>
+:root{--ink:#12303a;--bg:#eef2f3;--card:#fff;--accent:#d9791c;--line:#cfd9dc;--bad:#b3261e}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5}
+header{background:var(--ink);color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center}
+header h1{margin:0;font-size:1.3rem}
+header span{opacity:.85;margin-right:12px}
+main{max-width:900px;margin:24px auto;padding:0 16px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:18px;margin-bottom:18px}
+h2{margin:0 0 12px;font-size:1.1rem}
+nav{display:flex;gap:8px;margin-bottom:18px}
+nav button{background:#fff;border:1px solid var(--line);color:var(--ink)}
+nav button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+input,select,button{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:4px}
+button{background:var(--ink);color:#fff;border:0;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
+.low{color:var(--bad);font-weight:600}
+#login{max-width:340px;margin:80px auto}
+#login input{width:100%;margin-bottom:10px}
+#msg{color:var(--bad);min-height:1.4em}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div id="login" class="box">
+  <h2>Ingresar a Invencloud</h2>
+  <input id="u" placeholder="Usuario" autocomplete="username">
+  <input id="p" type="password" placeholder="Contraseña" autocomplete="current-password">
+  <button onclick="login()">Ingresar</button>
+  <p id="msg"></p>
+</div>
+
+<div id="app" class="hide">
+  <header><h1>Invencloud</h1><div><span id="who"></span><button onclick="logout()">Salir</button></div></header>
+  <main>
+    <nav>
+      <button data-t="prod" class="on">Productos</button>
+      <button data-t="mov">Inventario y ventas</button>
+      <button data-t="rep">Reportes</button>
+    </nav>
+
+    <section id="prod">
+      <div class="box admin"><h2>Nuevo producto</h2>
+        <div class="row">
+          <input id="n" placeholder="Nombre">
+          <input id="pr" type="number" min="0" placeholder="Precio">
+          <input id="st" type="number" min="0" placeholder="Stock inicial">
+          <input id="ms" type="number" min="0" placeholder="Stock mínimo">
+          <button onclick="addProduct()">Guardar producto</button>
+        </div>
+      </div>
+      <div class="box"><h2>Lista de productos</h2><table id="tp"></table></div>
+    </section>
+
+    <section id="mov" class="hide">
+      <div class="box"><h2>Registrar movimiento o venta</h2>
+        <div class="row">
+          <select id="sp"></select>
+          <input id="q" type="number" min="1" value="1" style="width:90px">
+          <button onclick="move('entrada')">Registrar entrada</button>
+          <button onclick="move('salida')">Registrar salida</button>
+          <button onclick="sell()" style="background:var(--accent)">Registrar venta</button>
+        </div>
+        <p id="msg2" class="low"></p>
+      </div>
+    </section>
+
+    <section id="rep" class="hide">
+      <div class="box"><h2>Productos con stock bajo</h2><table id="tl"></table></div>
+      <div class="box"><h2>Ventas por producto</h2><table id="ts"></table></div>
+      <div class="box"><h2>Últimas ventas</h2><table id="tr"></table></div>
+    </section>
+  </main>
+</div>
+
+<script>
+let token = localStorage.getItem('token'), role = localStorage.getItem('role');
+const $ = (id) => document.getElementById(id);
+async function api(url, method = 'GET', body) {
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: body && JSON.stringify(body) });
+  const d = await r.json();
+  if (r.status === 401 && url !== '/api/login') logout();
+  if (!r.ok) throw new Error(d.error);
+  return d;
+}
+async function login() {
+  try {
+    const d = await api('/api/login', 'POST', { username: $('u').value, password: $('p').value });
+    token = d.token; role = d.role;
+    localStorage.setItem('token', token); localStorage.setItem('role', role); localStorage.setItem('user', d.username);
+    start();
+  } catch (e) { $('msg').textContent = e.message; }
+}
+function logout() { localStorage.clear(); location.reload(); }
+function start() {
+  $('login').classList.add('hide'); $('app').classList.remove('hide');
+  $('who').textContent = localStorage.getItem('user') + ' (' + role + ')';
+  document.querySelectorAll('.admin').forEach((e) => e.classList.toggle('hide', role !== 'admin'));
+  loadProducts();
+}
+document.querySelectorAll('nav button').forEach((b) => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
+  ['prod', 'mov', 'rep'].forEach((s) => $(s).classList.toggle('hide', s !== b.dataset.t));
+  if (b.dataset.t === 'rep') loadReports(); else loadProducts();
+});
+const money = (n) => '$' + Number(n).toLocaleString('es-CO');
+async function loadProducts() {
+  const ps = await api('/api/products');
+  $('tp').innerHTML = '<tr><th>Producto</th><th>Precio</th><th>Stock</th><th></th></tr>' + ps.map((p) =>
+    `<tr><td>${p.name}</td><td>${money(p.price)}</td><td class="${p.stock <= p.min_stock ? 'low' : ''}">${p.stock}</td>
+     <td>${role === 'admin' ? `<button onclick="del(${p.id})">Eliminar</button>` : ''}</td></tr>`).join('');
+  $('sp').innerHTML = ps.map((p) => `<option value="${p.id}">${p.name} (stock ${p.stock})</option>`).join('');
+}
+async function addProduct() {
+  try { await api('/api/products', 'POST', { name: $('n').value, price: +$('pr').value, stock: +$('st').value, min_stock: +$('ms').value });
+    ['n', 'pr', 'st', 'ms'].forEach((i) => $(i).value = ''); loadProducts(); } catch (e) { alert(e.message); }
+}
+async function del(id) { if (confirm('¿Eliminar este producto?')) { await api('/api/products/' + id, 'DELETE'); loadProducts(); } }
+async function move(type) { await act('/api/movements', { product_id: $('sp').value, type, quantity: $('q').value }); }
+async function sell() { await act('/api/sales', { product_id: $('sp').value, quantity: $('q').value }); }
+async function act(url, body) {
+  try { await api(url, 'POST', body); $('msg2').textContent = ''; loadProducts(); } catch (e) { $('msg2').textContent = e.message; }
+}
+async function loadReports() {
+  const r = await api('/api/reports');
+  $('tl').innerHTML = '<tr><th>Producto</th><th>Stock</th><th>Mínimo</th></tr>' + (r.low.map((p) => `<tr><td>${p.name}</td><td class="low">${p.stock}</td><td>${p.min_stock}</td></tr>`).join('') || '<tr><td colspan="3">Todo el inventario está sobre el mínimo.</td></tr>');
+  $('ts').innerHTML = '<tr><th>Producto</th><th>Unidades</th><th>Total</th></tr>' + (r.sales.map((s) => `<tr><td>${s.name}</td><td>${s.units}</td><td>${money(s.total)}</td></tr>`).join('') || '<tr><td colspan="3">Aún no hay ventas registradas.</td></tr>');
+  $('tr').innerHTML = '<tr><th>Producto</th><th>Cantidad</th><th>Total</th><th>Fecha</th></tr>' + r.recent.map((s) => `<tr><td>${s.name}</td><td>${s.quantity}</td><td>${money(s.total)}</td><td>${new Date(s.created_at).toLocaleString('es-CO')}</td></tr>`).join('');
+}
+if (token) start();
+</script>
+</body>
+</html>
